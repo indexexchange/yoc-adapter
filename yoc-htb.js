@@ -130,10 +130,10 @@ function YocHtb(configs) {
 
         /* ---------------------- PUT CODE HERE ------------------------------------ */
         var queryObj = {};
-        var callbackId = System.generateUniqueId();
+        var callbackId = '_' + System.generateUniqueId();
 
         /* Change this to your bidder endpoint. */
-        var baseUrl = Browser.getProtocol() + '//someAdapterEndpoint.com/bid';
+        var baseUrl = Browser.getProtocol() + '//t.visx.net/hb';
 
         /* ------------------------ Get consent information -------------------------
          * If you want to implement GDPR consent in your adapter, use the function
@@ -164,7 +164,31 @@ function YocHtb(configs) {
 
         /* ---------------- Craft bid request using the above returnParcels --------- */
 
+        var auids = [];
+
+        for (var i = 0; i < returnParcels.length; i++) {
+            auids.push(returnParcels[i].xSlotRef.auid);
+        }
+
+        queryObj.auids = auids.join(',');
+        queryObj.u = Browser.getPageUrl();
+        queryObj.cur = 'USD';
+        queryObj.wrapperType = 'IX';
+        queryObj.wrapperVersion = SpaceCamp.version;
+        queryObj.adapterVersion = __profile.version;
+        queryObj.cb
+            = 'window.' + SpaceCamp.NAMESPACE + '.' + __profile.namespace + '.adResponseCallbacks.' + callbackId;
+
         /* ------- Put GDPR consent code here if you are implementing GDPR ---------- */
+
+        if (privacyEnabled && gdprStatus) {
+            if (gdprStatus.consentString) {
+                queryObj.gdpr_consent = gdprStatus.consentString; // eslint-disable-line camelcase
+            }
+            // eslint-disable-next-line camelcase
+            queryObj.gdpr_applies
+                = Utilities.isBoolean(gdprStatus.applies) ? Number(gdprStatus.applies) : 1;
+        }
 
         /* -------------------------------------------------------------------------- */
 
@@ -174,25 +198,6 @@ function YocHtb(configs) {
             callbackId: callbackId
         };
     }
-
-    /* =============================================================================
-     * STEP 3  | Response callback
-     * -----------------------------------------------------------------------------
-     *
-     * This generator is only necessary if the partner's endpoint has the ability
-     * to return an arbitrary ID that is sent to it. It should retrieve that ID from
-     * the response and save the response to adResponseStore keyed by that ID.
-     *
-     * If the endpoint does not have an appropriate field for this, set the profile's
-     * callback type to CallbackTypes.CALLBACK_NAME and omit this function.
-     */
-    function adResponseCallback(adResponse) {
-        /* Get callbackId from adResponse here */
-        var callbackId = 0;
-        __baseClass._adResponseStore[callbackId] = adResponse;
-    }
-
-    /* -------------------------------------------------------------------------- */
 
     /* Helpers
      * ---------------------------------- */
@@ -251,7 +256,7 @@ function YocHtb(configs) {
 
         /* ---------- Process adResponse and extract the bids into the bids array ------------ */
 
-        var bids = adResponse;
+        var seatbids = adResponse.seatbid || [];
 
         /* --------------------------------------------------------------------------------- */
 
@@ -265,7 +270,7 @@ function YocHtb(configs) {
 
             var curBid;
 
-            for (var i = 0; i < bids.length; i++) {
+            for (var bids, n, i = 0; i < seatbids.length; i++) {
                 /**
                  * This section maps internal returnParcels and demand returned from the bid request.
                  * In order to match them correctly, they must be matched via some criteria. This
@@ -274,9 +279,20 @@ function YocHtb(configs) {
                  */
 
                 /* ----------- Fill this out to find a matching bid for the current parcel ------------- */
-                if (curReturnParcel.xSlotRef.someCriteria === bids[i].someCriteria) {
-                    curBid = bids[i];
-                    bids.splice(i, 1);
+                bids = seatbids[i].bid;
+                for (n = 0; n < bids.length; n++) {
+                    if (curReturnParcel.xSlotRef.auid === String(bids[n].auid)) {
+                        curBid = bids[n];
+                        bids.splice(n, 1);
+
+                        break;
+                    }
+                }
+
+                if (curBid) {
+                    if (!bids.length) {
+                        seatbids.splice(i, 1);
+                    }
 
                     break;
                 }
@@ -285,6 +301,7 @@ function YocHtb(configs) {
             /* No matching bid found so its a pass */
             if (!curBid) {
                 if (__profile.enabledAnalytics.requestTime) {
+                    // eslint-disable-next-line camelcase
                     __baseClass._emitStatsEvent(sessionId, 'hs_slot_pass', headerStatsInfo);
                 }
                 curReturnParcel.pass = true;
@@ -301,7 +318,7 @@ function YocHtb(configs) {
             var bidPrice = curBid.price;
 
             /* The size of the given slot */
-            var bidSize = [Number(curBid.width), Number(curBid.height)];
+            var bidSize = [Number(curBid.w), Number(curBid.h)];
 
             /* The creative/adm for the given slot that will be rendered if is the winner.
              * Please make sure the URL is decoded and ready to be document.written.
@@ -318,14 +335,15 @@ function YocHtb(configs) {
             * If firing a tracking pixel is not required or the pixel url is part of the adm,
             * leave empty;
             */
-            var pixelUrl = '';
+            var pixelUrl = Browser.getProtocol() + '//t.visx.net/push_sync?wrapperType=IX&wrapperVersion='
+                + SpaceCamp.version + '&adapterVersion=' + __profile.version;
 
             /* --------------------------------------------------------------------------------------- */
 
             curBid = null;
             if (bidIsPass) {
                 //? if (DEBUG) {
-                Scribe.info(__profile.partnerId + ' returned pass for { id: ' + adResponse.id + ' }.');
+                Scribe.info(__profile.partnerId + ' returned pass for { id: ' + curReturnParcel.xSlotRef.auid + ' }.');
                 //? }
                 if (__profile.enabledAnalytics.requestTime) {
                     __baseClass._emitStatsEvent(sessionId, 'hs_slot_pass', headerStatsInfo);
@@ -413,7 +431,7 @@ function YocHtb(configs) {
             partnerId: 'YocHtb',
             namespace: 'YocHtb',
             statsId: 'YOC',
-            version: '2.0.0',
+            version: '1.0.0',
             targetingType: 'slot',
             enabledAnalytics: {
                 requestTime: true
@@ -438,9 +456,9 @@ function YocHtb(configs) {
             },
 
             /* The bid price unit (in cents) the endpoint returns, please refer to the readme for details */
-            bidUnitInCents: 1,
+            bidUnitInCents: 100,
             lineItemType: Constants.LineItemTypes.ID_AND_SIZE,
-            callbackType: Partner.CallbackTypes.ID,
+            callbackType: Partner.CallbackTypes.CALLBACK_NAME,
             architecture: Partner.Architectures.SRA,
             requestType: Partner.RequestTypes.ANY
         };
@@ -457,8 +475,7 @@ function YocHtb(configs) {
 
         __baseClass = Partner(__profile, configs, null, {
             parseResponse: __parseResponse,
-            generateRequestObj: __generateRequestObj,
-            adResponseCallback: adResponseCallback
+            generateRequestObj: __generateRequestObj
         });
     })();
 
@@ -490,8 +507,7 @@ function YocHtb(configs) {
 
         //? if (TEST) {
         parseResponse: __parseResponse,
-        generateRequestObj: __generateRequestObj,
-        adResponseCallback: adResponseCallback
+        generateRequestObj: __generateRequestObj
         //? }
     };
 
